@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """ระบบตรวจสอบสิทธิ์การขอพระราชทานเครื่องราชอิสริยาภรณ์และเหรียญจักรพรรดิมาลา (ร.จ.พ.)
-อ้างอิง: ระเบียบ สปน. พ.ศ. 2564
-ปรับปรุง: ตัดข้อความอ้างอิงระเบียบในแถบ Hero ออกเรียบร้อย
+ปรับปรุง: ตัดช่องติ๊กราชกิจจานุเบกษาที่ซ้ำซ้อนและไม่ได้ใช้งานออกเรียบร้อย
 """
 import re
 import io
@@ -109,7 +108,7 @@ def limit(ce, n, md):
 def make_ctx(acc, pos, **kw):
     c = dict(acc=acc, rule=RULES[acc][pos], pos_name=pos, Y=Y, ce=Y - 543, start=None, pos_date=None,
              since_date=None, salary=0, retire=None, salmax=None, contract=True, recv_idx=-1, last_year=0,
-             gazette=None, req_prev=False, rjp_got=False, E=0)
+             req_prev=False, rjp_got=False, E=0)
     c.update(kw)
     return c
 
@@ -205,10 +204,6 @@ def evaluate(c):
             if LADDER.index(PRIOR[tg]) != c["recv_idx"]:
                 out["warns"].append(f"การขอชั้น {tg} จำเป็นต้องเคยได้รับชั้น {PRIOR[tg]} มาก่อน — โปรดตรวจสอบความถูกต้องของทะเบียน")
                 if out["status"] == "ok":
-                    out["status"] = "warn"
-            if not c["gazette"]:
-                out["warns"].append(f"ต้องแนบสำเนาราชกิจจานุเบกษาหน้าประกาศของชั้น {PRIOR[tg]}")
-                if c["gazette"] is False and out["status"] == "ok":
                     out["status"] = "warn"
     else:
         fail_msgs = [m for m in first_fail[1]]
@@ -359,12 +354,10 @@ def single_mode():
     recv = st.selectbox("ชั้นตราสูงสุดที่เคยได้รับ", ["ไม่เคยได้รับ"] + LADDER,
                         format_func=lambda x: x if x == "ไม่เคยได้รับ" else f"{x} — {NAMES[x]}")
     last_year = 0
-    gazette = False
     if recv != "ไม่เคยได้รับ":
         unk = st.checkbox("ไม่ทราบปีที่ได้รับ")
         if not unk:
             last_year = st.number_input("ปี พ.ศ. ที่เสนอขอ/ได้รับครั้งล่าสุด", 2500, Y, Y - 3)
-        gazette = st.checkbox(f"มีสำเนาราชกิจจานุเบกษาของชั้น {recv}")
     req_prev = st.checkbox(f"ได้เสนอขอเครื่องราชฯ ในปี {Y - 1} ไปแล้ว แต่ยังไม่ประกาศในราชกิจจาฯ")
 
     if st.button("🔍 ตรวจสอบสิทธิ์"):
@@ -374,7 +367,7 @@ def single_mode():
         render(make_ctx(acc, pos, start=start, pos_date=pos_date, since_date=since_date, salary=salary,
                         retire=retire, salmax=salmax, contract=contract,
                         recv_idx=LADDER.index(recv) if recv in LADDER else -1, last_year=int(last_year),
-                        gazette=gazette, req_prev=req_prev))
+                        req_prev=req_prev))
 
 # ============================ นำเข้าสมุดทะเบียน ============================
 TH_DIGIT = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
@@ -571,7 +564,7 @@ def analyse(p, ex):
     sal, pos_d, since = num(ex.get(EX[0])), parse_date(ex.get(EX[1])), parse_date(ex.get(EX[2]))
     salmax, retire = yn(ex.get(EX[3])), yn(ex.get(EX[4]))
     c = make_ctx(acc, pos, start=start, pos_date=pos_d, since_date=since, salary=sal, retire=retire,
-                 salmax=salmax, recv_idx=recv_idx, last_year=(rd.year + 543) if rd else 0, gazette=None,
+                 salmax=salmax, recv_idx=recv_idx, last_year=(rd.year + 543) if rd else 0,
                  req_prev=truthy(ex.get(EX[5])), rjp_got=p["rjp"])
     res = evaluate(c)
     cand = [q for r, rs in rule["ranks"] if LADDER.index(r) > recv_idx for q in rs]
