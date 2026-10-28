@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """ระบบตรวจสอบสิทธิ์การขอพระราชทานเครื่องราชอิสริยาภรณ์และเหรียญจักรพรรดิมาลา (ร.จ.พ.)
 ปรับปรุง: เรียงลำดับตัวเลือก Dropdown ตามหมายเลขบัญชีจากน้อยไปมาก และตั้งค่า Default เป็นบัญชี 15
+ปรับปรุง: พนักงานราชการแยกเป็น 7 กลุ่มงานตามบัญชีเกณฑ์ใหม่ (อายุงาน 5 ปี / 3 ปี แยกตามกลุ่ม)
 """
 import re
 import io
@@ -68,6 +69,29 @@ ACCOUNTS = {
 ACC_NO = {O: "15", T: "16", C: "26"}
 CHAIN13 = [("ป.ช.", [("held", "ป.ม.", 3)]), ("ม.ว.ม.", [("held", "ป.ช.", 3)]), ("ม.ป.ช.", [("held", "ม.ว.ม.", 5)])]
 
+CONTRACT_NOTE = "ต้องเป็นพนักงานราชการตามสัญญาจ้างของส่วนราชการ ตามระเบียบสำนักนายกรัฐมนตรีว่าด้วยพนักงานราชการ"
+EQUIV_NOTE = "ต้องเป็นพนักงานราชการที่ลักษณะงานเทียบเท่าลูกจ้างประจำ (หมวดฝีมือขึ้นไป)"
+
+def chain(ranks, yrs=None):
+    yrs = yrs or [5] * (len(ranks) - 1)
+    out = [(ranks[0], [])]
+    for i in range(1, len(ranks)):
+        out.append((ranks[i], [("held", ranks[i - 1], yrs[i - 1])]))
+    return out
+
+CONTRACT_GROUPS = {
+    "กลุ่มงานบริการ / กลุ่มงานเทคนิค": {"service": 5, "ranks": chain(["บ.ม.", "บ.ช.", "จ.ม.", "จ.ช."])},
+    "กลุ่มงานบริหารทั่วไป": {"service": 5, "ranks": chain(["บ.ช.", "จ.ม.", "จ.ช.", "ต.ม."])},
+    "กลุ่มงานวิชาชีพเฉพาะ": {"service": 5, "ranks": chain(["จ.ม.", "จ.ช.", "ต.ม.", "ต.ช."])},
+    "กลุ่มงานเชี่ยวชาญเฉพาะ": {"service": 5, "ranks": chain(["จ.ช.", "ต.ม.", "ต.ช.", "ท.ม."])},
+    "กลุ่มงานเชี่ยวชาญพิเศษ ระดับทั่วไป": {"service": 3, "note": EQUIV_NOTE,
+                                           "ranks": chain(["ต.ม.", "ต.ช.", "ท.ม.", "ท.ช."])},
+    "กลุ่มงานเชี่ยวชาญพิเศษ ระดับประเทศ": {"service": 3, "note": EQUIV_NOTE,
+                                           "ranks": chain(["ต.ช.", "ท.ม.", "ท.ช.", "ป.ม."], [5, 5, 3])},
+    "กลุ่มงานเชี่ยวชาญพิเศษ ระดับสากล": {"service": 3, "note": EQUIV_NOTE,
+                                         "ranks": chain(["ท.ม.", "ท.ช.", "ป.ม.", "ป.ช."], [5, 3, 3])},
+}
+
 RULES = {
     O: {
         "ระดับปฏิบัติงาน": {"ranks": [("บ.ม.", []), ("บ.ช.", [("below", "op"), ("pos", 10)]), ("จ.ม.", [("min", "op")]), ("จ.ช.", [("min", "op"), ("pos", 10)])]},
@@ -89,9 +113,7 @@ RULES = {
             "ranks": [("ต.ม.", []), ("ต.ช.", []), ("ท.ม.", []), ("ท.ช.", []), ("ป.ม.", [])] + CHAIN13},
         "ศึกษานิเทศก์เชี่ยวชาญพิเศษ (เงินวิทยฐานะ 15,600)": {"ranks": [("ป.ช.", [("held", "ป.ม.", 3)]), ("ม.ว.ม.", [("held", "ป.ช.", 3)]), ("ม.ป.ช.", [("held", "ม.ว.ม.", 3)])]},
     },
-    C: {
-        "กลุ่มงานบริการ / ทั่วไป": {"ranks": [("บ.ม.", []), ("บ.ช.", [("held", "บ.ม.", 5)]), ("จ.ม.", [("held", "บ.ช.", 5)]), ("จ.ช.", [("held", "จ.ม.", 5)])]},
-    },
+    C: CONTRACT_GROUPS,
 }
 
 def opt_label(acc, lv):
@@ -152,7 +174,7 @@ def check(req, c):
 def evaluate(c):
     Y_, acc, rule = c["Y"], c["acc"], c["rule"]
     out = {"status": "bad", "target": None, "reasons": [], "warns": [], "conds": []}
-    n = CONFIG["min_service"][acc] + c["E"]
+    n = rule.get("service", CONFIG["min_service"][acc]) + c["E"]
     lim = limit(c["ce"], n, CONFIG["cutoff"])
     base_unknown = []
     if not c["start"]:
@@ -164,7 +186,7 @@ def evaluate(c):
     if acc == C and not c["contract"]:
         out["reasons"].append("สัญญาจ้างต้องต่อเนื่องตั้งแต่เริ่มบรรจุจนถึงปัจจุบัน")
         return out
-    
+
     ranks = [r for r in rule["ranks"] if LADDER.index(r[0]) > c["recv_idx"]]
     if not ranks:
         out["reasons"].append("ได้รับเครื่องราชอิสริยาภรณ์ชั้นสูงสุดตามเกณฑ์ของตำแหน่งนี้แล้ว")
@@ -317,7 +339,7 @@ def render(c):
             st.markdown(f'<div class="res cond"><h3>🟡 ขอพระราชทานชั้น {tg} ({NAMES[tg]}) ประจำปี {Yc} ได้ หากเงื่อนไขผ่าน:</h3>{li(main)}</div>', unsafe_allow_html=True)
         else:
             cls, head = ("ok", "✅ มีสิทธิ์ขอพระราชทาน") if res["status"] == "ok" else ("warn", "⚠️ มีสิทธิ์ แต่ต้องตรวจสอบเพิ่มเติม")
-            st.markdown(f'<div class="res {cls}"><h3>{head} ชั้น {tg} ({NAMES[tg]}) ประจำปี {Yc}</h3></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="res {cls}"><h3>{head} ชั้น {tg} ({NAMES[tg]}) ประจำปี {Yc}</h3>{li(res["warns"])}</div>', unsafe_allow_html=True)
         n, docs = documents(c, tg)
         st.markdown(f"**เอกสารที่ต้องจัดเตรียม จำนวน {n} ชุด**")
         for i, d in enumerate(docs, 1):
@@ -329,8 +351,16 @@ def single_mode():
     st.markdown('<div class="sec">1) ประเภทบุคลากรและตำแหน่ง</div>', unsafe_allow_html=True)
     acc_keys = list(ACCOUNTS.keys())
     acc = st.selectbox("ประเภทบุคลากร", acc_keys, format_func=ACCOUNTS.get, index=0)
-    pos = st.selectbox("ระดับตำแหน่ง", list(RULES[acc]))
+    
+    # ดึงรายการระดับตำแหน่ง/กลุ่มงานตามประเภทบุคลากรที่เลือกขึ้นมาแสดงผลครบถ้วน
+    pos = st.selectbox("ระดับตำแหน่ง / กลุ่มงาน", list(RULES[acc].keys()))
     rule = RULES[acc][pos]
+    
+    if acc == C:
+        st.caption("ℹ️ " + CONTRACT_NOTE)
+    if rule.get("note"):
+        st.caption("ℹ️ " + rule["note"])
+        
     all_reqs = [q for _, rs in rule["ranks"] for q in rs]
     kinds = {q[0] for q in all_reqs} | {q[1] for q in all_reqs if q[0] == "flag"}
 
@@ -385,6 +415,14 @@ LEVEL_T = {"ชำนาญการ": "ศึกษานิเทศก์ (�
 LV_ORDER = [("ชำนาญการพิเศษ", "ชพ"), ("เชี่ยวชาญพิเศษ", "ชชพ"), ("เชี่ยวชาญ", "ชช"), ("ชำนาญการ", "ชก"),
             ("ชำนาญงาน", "ชง"), ("ปฏิบัติการ", "ปก"), ("ปฏิบัติงาน", "ปง"), ("อาวุโส", "อส"),
             ("อำนวยการสูง", ""), ("อำนวยการต้น", "")]
+CONTRACT_KEYS = [("ระดับสากล", "กลุ่มงานเชี่ยวชาญพิเศษ ระดับสากล"),
+                 ("ระดับประเทศ", "กลุ่มงานเชี่ยวชาญพิเศษ ระดับประเทศ"),
+                 ("เชี่ยวชาญพิเศษ", "กลุ่มงานเชี่ยวชาญพิเศษ ระดับทั่วไป"),
+                 ("เชี่ยวชาญเฉพาะ", "กลุ่มงานเชี่ยวชาญเฉพาะ"),
+                 ("วิชาชีพเฉพาะ", "กลุ่มงานวิชาชีพเฉพาะ"),
+                 ("บริหารทั่วไป", "กลุ่มงานบริหารทั่วไป"),
+                 ("เทคนิค", "กลุ่มงานบริการ / กลุ่มงานเทคนิค"),
+                 ("บริการ", "กลุ่มงานบริการ / กลุ่มงานเทคนิค")]
 POSCOL = "ประเภท/ระดับ (ตามบัญชี)"
 EX = ["เงินเดือนปัจจุบัน", "วันที่ดำรงตำแหน่ง/ระดับปัจจุบัน", "วันที่เงินเดือนถึงเกณฑ์", "ได้เงินเดือนขั้นสูง",
       "เกษียณปีนี้", "เสนอขอปีที่แล้ว (รอประกาศ)"]
@@ -472,7 +510,11 @@ def norm_level(level):
 def map_pos(title, level):
     t, lv = re.sub(r"\s", "", title), norm_level(level)
     if "พนักงานราชการ" in t or "จ้าง" in t:
-        return opt_label(C, "กลุ่มงานบริการ / ทั่วไป")
+        txt = t + re.sub(r"\s", "", level)
+        for kw, grp in CONTRACT_KEYS:
+            if kw in txt:
+                return opt_label(C, grp)
+        return opt_label(C, "กลุ่มงานบริการ / กลุ่มงานเทคนิค")
     if "ศึกษานิเทศก์" in t:
         if lv == "ชำนาญการพิเศษ":
             key = "ศึกษานิเทศก์ชำนาญการพิเศษ (คศ.3)"
@@ -657,8 +699,10 @@ def make_template(rows=None):
     for s in [f"วิธีกรอกแม่แบบตรวจสิทธิ์เครื่องราชฯ สศจ. ประจำปี พ.ศ. {Y}",
               "1. กรอกในแผ่นงาน 'กรอกข้อมูล' — 1 คน = 1 แถว เริ่มแถวที่ 2",
               "2. คอลัมน์ 'ประเภท/ระดับ' และ 'ชั้นตราสูงสุด' มี Dropdown ให้คลิกเลือก",
-              "3. ช่องที่ไม่ทราบให้เว้นว่าง — ระบบจะสรุปเป็น 'ขอได้ ถ้า...'", ""]:
+              "3. ช่องที่ไม่ทราบให้เว้นว่าง — ระบบจะสรุปเป็น 'ขอได้ ถ้า...'",
+              "4. พนักงานราชการ: เลือกกลุ่มงานให้ตรงกับบัญชี (7 กลุ่ม) ระบบใช้ค่าเริ่มต้นเป็น 'กลุ่มงานบริการ / กลุ่มงานเทคนิค'"]:
         ins.append([s])
+    ins.append([""])
     ins["A1"].font = Font(bold=True, size=13)
     hdr_row = ins.max_row + 1
     ins.append(["คอลัมน์", "วิธีกรอก", "ตัวอย่าง"])
@@ -816,7 +860,9 @@ def batch_mode():
                     nxt = f"รอประกาศราชกิจจาฯ ปี {Y - 1}"
                 elif ny:
                     nxt = f"ปี พ.ศ. {ny[0]} (ชั้น {ny[1]})"
-        
+            if status in ("มีสิทธิ์", "ขอได้ ถ้า...") and c["rule"].get("note"):
+                reasons += f" | ตรวจสอบ: {c['rule']['note']}"
+
         rows.append({
             "ลำดับ": p["no"], "ชื่อ-สกุล": p["name"], "ตำแหน่ง/ระดับ": f"{p['title']} {p['level']}".strip(),
             "ชั้นตราที่มี (ปี)": got, "สถานะ": status, tgt_col: target,
